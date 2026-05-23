@@ -1,32 +1,29 @@
-import discord
-from discord import app_commands
-from discord.ext import commands
-import os 
-import dotenv
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-GUILD_ID = 1472622389321011212  # Guild ID where command registers
-# Add as many staff role IDs as you want here:
-STAFF_ROLE_IDS = [1472625665907097884, 1472625703215304767, 1472625741379145820, 1472625764410069167, 1504627483314749450, 1472625799646412934, 1472625905791795271]  # example: [role_id1, role_id2, ...]
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+GUILD_ID = 1472622389321011212
+STAFF_ROLE_IDS = [1472625665907097884, 1472625703215304767, 1472625741379145820, 1472625764410069167, 1504627483314749450, 1472625799646412934, 1472625905791795271]
 
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
-intents.messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 ticket_counter = 1
 
-# Build the embed and buttons for the menu
 def menu_embed():
     e = discord.Embed(title="Community Support and Report Ticket Bot.", color=discord.Color.blurple())
     e.description = (
         "Open the ticket type that fits your issue best. Please read the Terms of Service before opening any ticket.\n"
-        " before opening any ticket you need to know what you want. \n"
-        "**Report A Player**\nReport a player for breaking the rules.\n"
+        "Before opening any ticket you need to know what you want.\n\n"
+        "**Report A Player**\nReport a player for breaking the rules.\n\n"
         "**General Support**\nGet help with general questions or issues.\n"
     )
     return e
@@ -50,7 +47,6 @@ class CloseTicketView(discord.ui.View):
 
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, custom_id="ticket_close")
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # permission check: admin or any staff role or ticket owner (owner id stored in channel.topic)
         member = interaction.user
         if member.guild_permissions.administrator or any(r.id in STAFF_ROLE_IDS for r in member.roles):
             await interaction.response.send_message("Closing ticket...", ephemeral=True)
@@ -59,11 +55,14 @@ class CloseTicketView(discord.ui.View):
 
         topic = interaction.channel.topic or ""
         if topic.startswith("ticket_owner:"):
-            owner_id = int(topic.split(":")[1].split("|")[0])
-            if owner_id == interaction.user.id:
-                await interaction.response.send_message("Closing ticket...", ephemeral=True)
-                await interaction.channel.delete(reason="Ticket closed by owner")
-                return
+            try:
+                owner_id = int(topic.split(":")[1].split("|")[0])
+                if owner_id == interaction.user.id:
+                    await interaction.response.send_message("Closing ticket...", ephemeral=True)
+                    await interaction.channel.delete(reason="Ticket closed by owner")
+                    return
+            except Exception:
+                pass
 
         await interaction.response.send_message("Only staff or the ticket owner can close this ticket.", ephemeral=True)
 
@@ -71,12 +70,14 @@ async def create_ticket_channel(interaction: discord.Interaction, type_label: st
     global ticket_counter
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
-    # build channel name
+    if guild is None:
+        await interaction.followup.send("Guild not available.", ephemeral=True)
+        return
+
     safe_name = ''.join(ch for ch in interaction.user.name.lower() if ch.isalnum())[:8]
     channel_name = f"ticket-{ticket_counter}-{safe_name}"
     ticket_counter += 1
 
-    # overwrites: deny everyone, allow member and staff roles
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False)
     }
@@ -98,15 +99,14 @@ async def create_ticket_channel(interaction: discord.Interaction, type_label: st
 
         embed = discord.Embed(
             title=f"{type_label} Ticket",
-            description="please describe the issue and provide any relevant evidence or details.",
+            description="Please describe the issue and provide any relevant evidence or details.",
             color=discord.Color.green()
         )
         await new_ch.send(content=interaction.user.mention, embed=embed, view=CloseTicketView())
         await interaction.followup.send(f"Ticket created: {new_ch.mention}", ephemeral=True)
     except Exception:
-        await interaction.followup.send("Failed to create ticket channel. Check bot permissions.", ephemeral=True)
+        await interaction.followup.send("Failed to create ticket channel. Check bot permissions and category ID.", ephemeral=True)
 
-# Slash command to post the ticket menu (admin-only)
 @tree.command(name="create_ticket", description="Post the ticket menu in a channel", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(channel="Channel to post the ticket menu in", category="Optional category to place ticket channels under")
 @app_commands.checks.has_permissions(administrator=True)
@@ -118,7 +118,6 @@ async def create_ticket(interaction: discord.Interaction, channel: discord.TextC
     except Exception:
         await interaction.response.send_message("Failed to post menu. Check bot permissions.", ephemeral=True)
 
-# Error handler for permission fails
 @create_ticket.error
 async def create_ticket_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
@@ -128,7 +127,10 @@ async def create_ticket_error(interaction: discord.Interaction, error):
 
 @bot.event
 async def on_ready():
-    await tree.sync(guild=discord.Object(id=GUILD_ID))
+    try:
+        await tree.sync(guild=discord.Object(id=GUILD_ID))
+    except Exception:
+        pass
     print(f"Logged in as {bot.user}")
 
 bot.run(os.getenv("TOKEN"))
